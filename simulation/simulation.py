@@ -1,14 +1,16 @@
-#import sys
-#sys.path.append(r'/home/lukai/testVrep/ActPerc')
-#from Camera import Camera
-#from UR5 import UR5
+import sys
 import os
+sys.path.append(os.getcwd())
+from ur5 import UR5
+
 import time
 import numpy.random as random
 import numpy as np
 import math
 import PIL.Image as Image
 import array
+import h5py
+import cv2 as cv
 
 try:
     import vrep
@@ -144,69 +146,13 @@ class Camera():
         else:
             print ("--- Error Raise")
 
-
-class UR5():
-
-    def __init__(self):
-        self.clientID = vrep.simxStart('127.0.0.1', 19999, True, True, 5000, 5) 
-        self.RAD2DEG = 180 / math.pi   # 常数，弧度转度数
-        self.tstep = 0.005             # 定义仿真步长
-        self.cubeName = 'UR5_ikTarget'
-        self.targetPosition=np.zeros(3,dtype=np.float)#目标位置
-        self.targetQuaternion=np.zeros(4)
-
-    def connect(self):  #连接v-rep
-        print('Program started') # 关闭潜在的连接 
-        vrep.simxFinish(-1) # 每隔0.2s检测一次，直到连接上V-rep 
-        while True:
-            self.clientID = vrep.simxStart('127.0.0.1', 19999, True, True, 5000, 5) 
-            if self.clientID > -1: 
-                break 
-            else: 
-                time.sleep(0.2) 
-                print("Failed connecting to remote API server!") 
-        print("Connection success!")
-        vrep.simxSetFloatingParameter(self.clientID, vrep.sim_floatparam_simulation_time_step, self.tstep, vrep.simx_opmode_oneshot) # 保持API端与V-rep端相同步长
-        vrep.simxSynchronous(self.clientID, True) # 然后打开同步模式 
-        vrep.simxStartSimulation(self.clientID, vrep.simx_opmode_oneshot) 
-
-    def disconnect(self):
-        vrep.simxStopSimulation(self.clientID,vrep.simx_opmode_oneshot)
-        vrep.simxFinish(self.clientID)
-        print ('Program ended!')
-        
-    def get_clientID(self):
-        return self.clientID
-
-    def ur5moveto(self,x,y,z):
-        vrep.simxSynchronousTrigger(self.clientID) # 让仿真走一步 
-        self.targetQuaternion[0]=0.707
-        self.targetQuaternion[1]=0
-        self.targetQuaternion[2]=0.707
-        self.targetQuaternion[3]=0      #四元数
-        self.targetPosition[0]=x;
-        self.targetPosition[1]=y;
-        self.targetPosition[2]=z;
-        vrep.simxPauseCommunication(self.clientID, True)    #开启仿真
-        vrep.simxSetIntegerSignal(self.clientID, 'ICECUBE_0', 21, vrep.simx_opmode_oneshot)
-        for i in range(3):
-            vrep.simxSetFloatSignal(self.clientID, 'ICECUBE_'+str(i+1),self.targetPosition[i],vrep.simx_opmode_oneshot)
-        for i in range(4):
-            vrep.simxSetFloatSignal(self.clientID, 'ICECUBE_'+str(i+4),self.targetQuaternion[i], vrep.simx_opmode_oneshot)
-        vrep.simxPauseCommunication(self.clientID, False)
-        vrep.simxSynchronousTrigger(self.clientID) # 进行下一步 
-        vrep.simxGetPingTime(self.clientID) # 使得该仿真步走完
-
-    def grasp(self):
-        vrep.simxSetIntegerSignal(self.clientID,'RG2CMD',1,vrep.simx_opmode_blocking);
-
-    def lose(self):
-        vrep.simxSetIntegerSignal(self.clientID,'RG2CMD',0,vrep.simx_opmode_blocking);
-
-
+"""
+    Import const
+"""
 Simu_STEP = 2
 Lua_PATH = r'../model/infer.lua'
 Save_PATH_RES = r'./affordance/'
+Save_PATH_AFFIMG = r'./affimg/'
 
 def main():
     ur5 = UR5()
@@ -234,7 +180,9 @@ def main():
         except:
             print('!!!!!!!!!!!!!!!!!!!!!!!!  Error occurred during creating affordance map')
         
+        hdf2affimg(Save_PATH_RES + str(currCmdTime) + '_results.h5', currCmdTime)
         # Move ur5 
+        # TODO:
         location = random.randint(100, 200, (1, 3)) 
         location = location[0] / 400
         print("UR5 Move to %s" %(location))
@@ -247,8 +195,19 @@ def main():
 
     ur5.disconnect()
 
+def hdf2affimg(filename, currCmdTime):
+    """
+        Convert hdf5 file(output of affordance map network in lua) to img
+    """
+    h = h5py.File(filename,'r')
+
+    res = h['results']
+    res = np.array(res)
+    res = res[0,1,:,:]
+    resresize = 255.0 * cv.resize(res, (512,424), interpolation=cv.INTER_CUBIC)
+
+    affimg_path = Save_PATH_AFFIMG + str(currCmdTime) + '_affimg.png'
+    cv.imwrite(affimg_path, resresize)
 
 if __name__ == '__main__':
-
-
     main()
