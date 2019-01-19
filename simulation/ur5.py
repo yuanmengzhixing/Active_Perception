@@ -1,6 +1,7 @@
 import numpy as np
 import math
 import time
+import vrep
 
 class UR5():
 
@@ -11,6 +12,13 @@ class UR5():
         self.cubeName = 'UR5_ikTarget'
         self.targetPosition=np.zeros(3,dtype=np.float)#目标位置
         self.targetQuaternion=np.zeros(4)
+        # 配置关节信息
+        self.jointNum = 6
+        self.baseName = 'UR5'         #机器人名字
+        self.cubeName = 'UR5_ikTarget'
+        self.jointName = 'UR5_joint'
+        self.jointHandle = np.zeros((self.jointNum,), dtype=np.int) # 各关节handle
+        self.jointangel=[-111.5,-22.36,88.33,28.08,-90,-21.52]
 
     def connect(self):  #连接v-rep
         print('Program started') # 关闭潜在的连接 
@@ -26,6 +34,20 @@ class UR5():
         vrep.simxSetFloatingParameter(self.clientID, vrep.sim_floatparam_simulation_time_step, self.tstep, vrep.simx_opmode_oneshot) # 保持API端与V-rep端相同步长
         vrep.simxSynchronous(self.clientID, True) # 然后打开同步模式 
         vrep.simxStartSimulation(self.clientID, vrep.simx_opmode_oneshot) 
+
+    def ankleinit(self):
+        for i in range(self.jointNum):
+            _, returnHandle = vrep.simxGetObjectHandle(self.clientID, self.jointName + str(i+1), vrep.simx_opmode_blocking) 
+            self.jointHandle[i] = returnHandle 
+        print('Handles available!') 
+        vrep.simxSynchronousTrigger(self.clientID) # 让仿真走一步 
+        for i in range(self.jointNum):
+            vrep.simxPauseCommunication(self.clientID, True) 
+            vrep.simxSetJointTargetPosition(self.clientID, self.jointHandle[i],self.jointangel[i]/self.RAD2DEG, vrep.simx_opmode_oneshot)  #设置关节角
+            vrep.simxPauseCommunication(self.clientID, False)
+            vrep.simxSynchronousTrigger(self.clientID) # 进行下一步 
+            vrep.simxGetPingTime(self.clientID) # 使得该仿真步走完
+
 
     def disconnect(self):
         vrep.simxStopSimulation(self.clientID,vrep.simx_opmode_oneshot)
@@ -55,9 +77,8 @@ class UR5():
         vrep.simxGetPingTime(self.clientID) # 使得该仿真步走完
 
     def grasp(self):
-        vrep.simxSetIntegerSignal(self.clientID,'RG2CMD',1,vrep.simx_opmode_blocking);
+        vrep.simxSetIntegerSignal(self.clientID,'RG2CMD',1,vrep.simx_opmode_blocking)
 
     def lose(self):
-        vrep.simxSetIntegerSignal(self.clientID,'RG2CMD',0,vrep.simx_opmode_blocking);
-
+        vrep.simxSetIntegerSignal(self.clientID,'RG2CMD',0,vrep.simx_opmode_blocking)
 
