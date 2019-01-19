@@ -1,11 +1,3 @@
-# Make sure to have the server side running in V-REP: 
-# in a child script of a V-REP scene, add following command
-# to be executed just once, at simulation start:
-#
-# simRemoteApi.start(19999)
-#
-# then start simulation, and run this program.
-
 import math
 import numpy as np
 import PIL.Image as Image
@@ -15,7 +7,7 @@ import array
 """
 import time
 
-class Camera():
+class CAMERA():
 
     def __init__(self, clientID):
         """
