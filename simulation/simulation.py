@@ -1,7 +1,6 @@
 import sys
 import os
 sys.path.append(os.getcwd())
-from ur5 import UR5
 
 import time
 import numpy.random as random
@@ -23,14 +22,7 @@ except:
     print ('--------------------------------------------------------------')
     print ('')
 
-# Make sure to have the server side running in V-REP: 
-# in a child script of a V-REP scene, add following command
-# to be executed just once, at simulation start:
-#
-# simRemoteApi.start(19999)
-#
-# then start simulation, and run this program.
-
+from ur5 import UR5
 
 class Camera():
 
@@ -38,15 +30,16 @@ class Camera():
         """
             Initialize the Camera in simulation
         """
-        # self.RAD2EDG = 180 / math.pi
+        self.RAD2EDG = 180 / math.pi
+        self.EDG2RAD = math.pi / 180
         self.Save_IMG = True
         self.Save_PATH_COLOR = r'./color/'
         self.Save_PATH_DEPTH = r'./depth/'
-        self.Dis_NEAR = 0.01
         self.Dis_FAR = 10
         self.INT16 = 65535
         self.Img_WIDTH = 512
         self.Img_HEIGHT = 424
+        self.theta = 70
         self.Camera_NAME = r'kinect'
         self.Camera_RGB_NAME = r'kinect_rgb'
         self.Camera_DEPTH_NAME = r'kinect_depth'
@@ -82,15 +75,28 @@ class Camera():
         _, self.kinectRGB_handle = vrep.simxGetObjectHandle(self.clientID, self.Camera_RGB_NAME, vrep.simx_opmode_oneshot_wait)
         _, self.kinectDepth_handle = vrep.simxGetObjectHandle(self.clientID, self.Camera_DEPTH_NAME, vrep.simx_opmode_oneshot_wait)
         # Get camera pose and intrinsics in simulation
-        _, cam_position = vrep.simxGetObjectPosition(self.clientID, self.cam_handle, -1, vrep.simx_opmode_oneshot_wait)
+        _, self.cam_position = vrep.simxGetObjectPosition(self.clientID, self.cam_handle, -1, vrep.simx_opmode_oneshot_wait)
         _, cam_orientation = vrep.simxGetObjectOrientation(self.clientID, self.cam_handle, -1, vrep.simx_opmode_oneshot_wait)
 
         self.cam_trans = np.eye(4,4)
-        self.cam_trans[0:3,3] = np.asarray(cam_position)
+        self.cam_trans[0:3,3] = np.asarray(self.cam_position)
         self.cam_orientation = [-cam_orientation[0], -cam_orientation[1], -cam_orientation[2]]
         self.cam_rotm = np.eye(4,4)
         self.cam_rotm[0:3,0:3] = np.linalg.inv(self._euler2rotm(cam_orientation))
         self.cam_pose = np.dot(self.cam_trans, self.cam_rotm) # Compute rigid transformation representating camera pose
+        self._intri_camera()
+
+    def _intri_camera(self):
+        """
+            Calculate the intrinstic parameters of camera
+        """
+        fx = -self.Img_WIDTH/(2.0*self.Dis_FAR*math.tan(self.theta * self.EDG2RAD))
+        fy = fx
+        u0 = self.Img_WIDTH / 2
+        v0 = self.Img_HEIGHT / 2
+        self.intri = np.array([[fx, 0, u0],
+                               [0, fy, v0],
+                               [0, 0, 1]])
 
     def get_camera_data(self):
         """
@@ -116,7 +122,9 @@ class Camera():
         # zNear = 0.01
         # zFar = 10
         # depth_img = depth_img * (zFar - zNear) + zNear
-        depth_img = (depth_img - self.Dis_NEAR)/self.Dis_FAR * self.INT16
+        depth_img[depth_img < 0] = 0
+        depth_img[depth_img > 1] = 1
+        depth_img = depth_img * self.INT16
         return depth_img, color_img
 
     def save_image(self, cur_depth, cur_color, currCmdTime, Save_IMG = True):
@@ -147,7 +155,7 @@ class Camera():
             print ("--- Error Raise")
 
 """
-    Import const
+    important const
 """
 Simu_STEP = 2
 Lua_PATH = r'../model/infer.lua'
@@ -157,6 +165,7 @@ Save_PATH_AFFIMG = r'./affimg/'
 def main():
     ur5 = UR5()
     ur5.connect();
+    ur5.ankleinit()
     clientID = ur5.get_clientID()
     camera = Camera(clientID)
 
@@ -181,12 +190,19 @@ def main():
             print('!!!!!!!!!!!!!!!!!!!!!!!!  Error occurred during creating affordance map')
         
         hdf2affimg(Save_PATH_RES + str(currCmdTime) + '_results.h5', currCmdTime)
-        # Move ur5 
-        # TODO:
-        location = random.randint(100, 200, (1, 3)) 
-        location = location[0] / 400
+
+        # TODO: get the push u,v coordinate
+        u = 256
+        v = 212
+        camera_coor = pixel2camera(u, v, cur_depth, camera.intri, camera.Dis_FAR)
+        _, ur5_position = vrep.simxGetObjectPosition(clientID, ur5.get_handle(), -1, vrep.simx_opmode_oneshot_wait)
+        location = camera2ur5(camera_coor, ur5_position, camera.cam_position)
+        
+        # Move ur5         
+        # location = random.randint(100, 200, (1, 3)) 
+        # location = location[0] / 400
         print("UR5 Move to %s" %(location))
-        ur5.ur5moveto(location[0], location[1], location[2])
+        ur5.ur5moveto(location[0], location[1], location[2] - 0.05)
         count += 1
 
         lastCmdTime=currCmdTime
@@ -204,10 +220,28 @@ def hdf2affimg(filename, currCmdTime):
     res = h['results']
     res = np.array(res)
     res = res[0,1,:,:]
-    resresize = 255.0 * cv.resize(res, (512,424), interpolation=cv.INTER_CUBIC)
+    resresize = 255.0 * cv.resize(res, (512, 424), interpolation=cv.INTER_CUBIC)
 
     affimg_path = Save_PATH_AFFIMG + str(currCmdTime) + '_affimg.png'
     cv.imwrite(affimg_path, resresize)
+
+def pixel2camera(u, v, cur_depth, camera_intri, camera_disfar):
+    """
+        from pixel u,v and correspondent depth z -> coor in camera coordinate (x,y,z)
+    """
+    depth = cur_depth[u][v] / 65535 * camera_disfar
+    x = depth*(u - camera_intri[0][2]) / camera_intri[0][0]
+    y = depth*(v - camera_intri[1][2]) / camera_intri[1][1]
+    return np.array([x, y, depth])
+
+def camera2ur5(camera_coor, ur5_position, cam_position):
+    """
+        from camera coor to ur5 coor
+        Notice the camera faces the plain directly and we needn't convert the depth to real z
+    """
+    camera_coor[2] = - camera_coor[2]
+    location = camera_coor + cam_position - np.asarray(ur5_position)
+    return location
 
 if __name__ == '__main__':
     main()
