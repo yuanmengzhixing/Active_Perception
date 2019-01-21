@@ -1,7 +1,16 @@
 import numpy as np
 import math
 import time
-import vrep
+try:
+    import vrep
+except:
+    print ('--------------------------------------------------------------')
+    print ('"vrep.py" could not be imported. This means very probably that')
+    print ('either "vrep.py" or the remoteApi library could not be found.')
+    print ('Make sure both are in the same folder as this file,')
+    print ('or appropriately adjust the file "vrep.py"')
+    print ('--------------------------------------------------------------')
+    print ('')
 
 class UR5():
 
@@ -9,14 +18,14 @@ class UR5():
         self.clientID = vrep.simxStart('127.0.0.1', 19999, True, True, 5000, 5) 
         self.RAD2DEG = 180 / math.pi   # 常数，弧度转度数
         self.tstep = 0.005             # 定义仿真步长
-        self.cubeName = 'UR5_ikTarget'
+        self.cubeName = r'UR5_ikTarget'
         self.targetPosition=np.zeros(3,dtype=np.float)#目标位置
         self.targetQuaternion=np.zeros(4)
         # 配置关节信息
         self.jointNum = 6
-        self.baseName = 'UR5'         #机器人名字
-        self.cubeName = 'UR5_ikTarget'
-        self.jointName = 'UR5_joint'
+        self.baseName = r'UR5'         #机器人名字
+        self.cubeName = r'UR5_ikTarget'
+        self.jointName = r'UR5_joint'
         self.jointHandle = np.zeros((self.jointNum,), dtype=np.int) # 各关节handle
         self.jointangel=[-111.5,-22.36,88.33,28.08,-90,-21.52]
 
@@ -36,10 +45,13 @@ class UR5():
         vrep.simxStartSimulation(self.clientID, vrep.simx_opmode_oneshot) 
 
     def ankleinit(self):
+        """
+            Initialize at the beginning of the simulation
+            Let the joint transform into a suitable pose
+        """
         for i in range(self.jointNum):
             _, returnHandle = vrep.simxGetObjectHandle(self.clientID, self.jointName + str(i+1), vrep.simx_opmode_blocking) 
-            self.jointHandle[i] = returnHandle 
-        print('Handles available!') 
+            self.jointHandle[i] = returnHandle  
         vrep.simxSynchronousTrigger(self.clientID) # 让仿真走一步 
         for i in range(self.jointNum):
             vrep.simxPauseCommunication(self.clientID, True) 
@@ -47,17 +59,25 @@ class UR5():
             vrep.simxPauseCommunication(self.clientID, False)
             vrep.simxSynchronousTrigger(self.clientID) # 进行下一步 
             vrep.simxGetPingTime(self.clientID) # 使得该仿真步走完
-
+        print('UR5 ankles initialized!')
 
     def disconnect(self):
         vrep.simxStopSimulation(self.clientID,vrep.simx_opmode_oneshot)
         vrep.simxFinish(self.clientID)
         print ('Program ended!')
-        
+    
+    @ property    
     def get_clientID(self):
         return self.clientID
 
+    def get_handle(self):
+        _, self.ur5_handle = vrep.simxGetObjectHandle(self.clientID, self.UR5_NAME, vrep.simx_opmode_oneshot_wait)
+        return self.ur5_handle
+
     def ur5moveto(self,x,y,z):
+        """
+            Move ur5 to location (x,y,z)
+        """
         vrep.simxSynchronousTrigger(self.clientID) # 让仿真走一步 
         self.targetQuaternion[0]=0.707
         self.targetQuaternion[1]=0
